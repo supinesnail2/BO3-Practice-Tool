@@ -6,8 +6,7 @@ A modified build of [Joshr520's BO3 Practice Tool](https://github.com/Joshr520/B
 
 **Game Setup** (new sidebar group, with a status line at the top of the sidebar):
 
-- **Game Version**: shows whether `BlackOps3.exe` is the old (speedrun downgrade) or new (current Steam) patch, and whether BO3 Workshop Stack can run on it. Save both exes and switch between them with one click. They are kept in an `Exe Versions` folder in the game directory.
-- **Loaded Mods**: reads [BO3 Workshop Stack](https://steamcommunity.com/sharedfiles/filedetails/?id=3798094543)'s log to show whether it is running, why it refused if it did, and which mods are loaded in which order. Also lists your subscribed Workshop mods.
+- **Game Version**: shows whether `BlackOps3.exe` is the old (speedrun downgrade) or new (current Steam) patch. Save both exes and switch between them with one click. They are kept in an `Exe Versions` folder in the game directory.
 - **T7 Patch**: finds T7 Patch, shows whether it is running and warns when BO3 was started before it. Includes a **Start T7 Patch + BO3** button and an optional auto-start. T7 Patch itself is not included; it is launched as a separate program.
 
 **Weapon loadouts now work**:
@@ -20,10 +19,11 @@ A modified build of [Joshr520's BO3 Practice Tool](https://github.com/Joshr520/B
 
 - New icon: orange "III" in a stopwatch.
 - Disk and process checks run in the background, so the window stays responsive when the game is on a slow or busy drive.
+- **Portable, Windows 10 and 11**: the Visual C++ runtime is included, and settings are kept next to the exe however it is started, so the folder can live anywhere (even a USB stick) with no installer.
 
 ## Install
 
-1. Download `BO3-Practice-Tool.zip` from [Releases](../../releases) and extract it anywhere.
+1. Download `BO3-Practice-Tool.zip` from [Releases](../../releases) and extract it anywhere. Works on Windows 10 and 11 (64-bit) with no installer; needs a graphics driver with Vulkan support, which any GPU from the last several years has.
 2. Run `BO3 Practice Tool.exe` and select your `Call of Duty Black Ops III` folder when asked.
 3. If the in-game compiler files are missing, use the download button at the top of the sidebar. It fetches them from the original tool's releases.
 
@@ -45,7 +45,7 @@ Visual Studio 2022 (or Build Tools) with the C++ workload, and the [Vulkan SDK](
 MSBuild "BO3 Practice Tool.sln" /p:Configuration=Release /p:Platform=x64
 ```
 
-Copy `libcurl.dll`, `miniz.dll`, `zlib1.dll` and `SDL2.dll` next to the exe, along with the `Fonts`, `Resource Images` and `Exported Splits` folders.
+Copy `libcurl.dll`, `miniz.dll`, `zlib1.dll`, `SDL2.dll` and the Visual C++ runtime (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` from `VC\Redist\MSVC\<version>\x64\Microsoft.VC143.CRT`) next to the exe, along with the `Fonts`, `Resource Images` and `Exported Splits` folders.
 
 ## Credits
 

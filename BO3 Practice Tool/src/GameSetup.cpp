@@ -45,14 +45,13 @@ namespace BO3PT::GameSetup
         const char* sha256;
         const char* label;
         PatchKind kind;
-        bool stackSupported;
     };
 
     // SHA-256 of BlackOps3.exe for the builds we know about
     static const KnownBuild kKnownBuilds[] = {
-        { "51CA63BBC660E0826943C60DA67606F6BCB4B3B519528B5E0548C68C9423A323", "New patch (current Steam, build 24784313)", PatchKind::New, true },
-        { "66B95EB4667BD5B3B3D230E7BED1D29CCD261D48CA2699F01216C863BE24FF44", "Old patch (speedrun downgrade)", PatchKind::Old, false },
-        { "9BA98DBA41E18EF47DE6C63937340F8EAE7CB251F8FBC2E78D70047B64AA15B5", "Old patch (build 21201493)", PatchKind::Old, true },
+        { "51CA63BBC660E0826943C60DA67606F6BCB4B3B519528B5E0548C68C9423A323", "New patch (current Steam, build 24784313)", PatchKind::New },
+        { "66B95EB4667BD5B3B3D230E7BED1D29CCD261D48CA2699F01216C863BE24FF44", "Old patch (speedrun downgrade)", PatchKind::Old },
+        { "9BA98DBA41E18EF47DE6C63937340F8EAE7CB251F8FBC2E78D70047B64AA15B5", "Old patch (build 21201493)", PatchKind::Old },
     };
 
     static const KnownBuild* FindBuild(const std::string& hash)
@@ -99,23 +98,6 @@ namespace BO3PT::GameSetup
     static fs::path ExeVersionsDir() { return GameDir() / L"Exe Versions"; }
     static fs::path OldSlot() { return ExeVersionsDir() / L"BlackOps3.old.exe"; }
     static fs::path NewSlot() { return ExeVersionsDir() / L"BlackOps3.new.exe"; }
-    static fs::path WorkshopDir() { return GameDir().parent_path().parent_path() / L"workshop" / L"content" / L"311210"; }
-    static const wchar_t* kStackId = L"3798094543";
-    static const wchar_t* kYuriId = L"3715159092";
-
-    static std::string StripColors(const std::string& s)
-    {
-        std::string out;
-        for (size_t i = 0; i < s.size(); i++) {
-            if (s[i] == '^' && i + 1 < s.size() && isdigit((unsigned char)s[i + 1])) {
-                i++;
-                continue;
-            }
-            out += s[i];
-        }
-        size_t start = out.find_first_not_of(' ');
-        return start == std::string::npos ? "" : out.substr(start);
-    }
 
     static std::string Sha256File(const fs::path& path)
     {
@@ -229,25 +211,6 @@ namespace BO3PT::GameSetup
         std::string hash;
     };
 
-    struct ModItem {
-        std::string id;
-        std::string folder;
-        std::string title;
-        std::string type;
-    };
-
-    struct StackState {
-        bool installed = false;
-        bool logFound = false;
-        std::string version;
-        bool refused = false;
-        std::string refusedReason;
-        bool turnedOn = false;
-        int count = -1;
-        std::vector<std::string> enabled; // raw "ENABLED" payloads, in load order
-        fs::file_time_type logWritten;
-    };
-
     struct T7Settings {
         bool found = false;
         bool friendsOnly = false;
@@ -270,8 +233,6 @@ namespace BO3PT::GameSetup
     static std::mutex s_Lock;
     static std::map<fs::path, HashEntry> s_Hashes; // guarded by s_Lock
     static std::map<fs::path, std::chrono::steady_clock::time_point> s_HashFailed; // guarded by s_Lock
-    static std::vector<ModItem> s_Mods;            // guarded by s_Lock
-    static StackState s_Stack;                     // guarded by s_Lock
     static Snapshot s_Snap;                        // guarded by s_Lock
     static std::string s_T7PathShared;             // guarded by s_Lock, copy of s_T7Path for the worker
     static std::atomic<bool> s_WorkerStarted = false;
@@ -321,92 +282,6 @@ namespace BO3PT::GameSetup
         else {
             s_HashFailed.erase(path);
         }
-    }
-
-    static void ScanMods()
-    {
-        std::vector<ModItem> mods;
-        std::error_code ec;
-        for (const fs::directory_entry& dir : fs::directory_iterator(WorkshopDir(), ec)) {
-            fs::path json = dir.path() / L"workshop.json";
-            if (!fs::exists(json, ec)) {
-                continue;
-            }
-            WJson builder = WJson::FromFile(Narrow(json.wstring()));
-            rapidjson::Document& doc = builder.GetDocument();
-            if (!doc.IsObject()) {
-                continue;
-            }
-            ModItem item;
-            item.id = Narrow(dir.path().filename().wstring());
-            if (doc.HasMember("FolderName") && doc["FolderName"].IsString()) item.folder = doc["FolderName"].GetString();
-            if (doc.HasMember("Title") && doc["Title"].IsString()) item.title = StripColors(doc["Title"].GetString());
-            if (doc.HasMember("Type") && doc["Type"].IsString()) item.type = doc["Type"].GetString();
-            if (item.title.empty()) item.title = item.folder;
-            mods.push_back(item);
-        }
-        std::sort(mods.begin(), mods.end(), [](const ModItem& a, const ModItem& b) { return _stricmp(a.title.c_str(), b.title.c_str()) < 0; });
-        std::lock_guard<std::mutex> lock(s_Lock);
-        s_Mods = mods;
-    }
-
-    static void ScanStackLog()
-    {
-        StackState state;
-        std::error_code ec;
-        fs::path stackDir = WorkshopDir() / kStackId;
-        state.installed = fs::exists(stackDir / L"bo3_stack.dll", ec);
-        fs::path log = stackDir / L"bo3_stack.log";
-        std::ifstream file(log);
-        if (file) {
-            state.logFound = true;
-            state.logWritten = fs::last_write_time(log, ec);
-            std::string line;
-            bool inRefusal = false;
-            while (std::getline(file, line)) {
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                size_t close = line.find("] ");
-                bool tagged = !line.empty() && line[0] == '[' && close != std::string::npos;
-                if (!tagged) {
-                    // Continuation lines belong to the refusal message
-                    if (inRefusal && !line.empty() && state.refusedReason.size() < 600) {
-                        state.refusedReason += "\n" + line;
-                    }
-                    continue;
-                }
-                inRefusal = false;
-                std::string msg = line.substr(close + 2);
-                if (msg.rfind("VERSION ", 0) == 0) {
-                    // A new game session starts here; forget the previous one
-                    std::string version = msg.substr(8);
-                    state = StackState{ state.installed, true, version };
-                    state.logWritten = fs::last_write_time(log, ec);
-                }
-                else if (msg.rfind("REFUSED", 0) == 0) {
-                    state.refused = true;
-                    size_t code = msg.find(' ', 8);
-                    state.refusedReason = code == std::string::npos ? msg : msg.substr(code + 1);
-                    inRefusal = true;
-                }
-                else if (msg.rfind("STACK TURNED ON", 0) == 0) {
-                    state.turnedOn = true;
-                }
-                else if (msg.rfind("STACK count=", 0) == 0) {
-                    state.count = atoi(msg.c_str() + 12);
-                    state.enabled.clear();
-                }
-                else if (msg.rfind("ENABLED ", 0) == 0) {
-                    std::string payload = msg.substr(8);
-                    if (std::find(state.enabled.begin(), state.enabled.end(), payload) == state.enabled.end()) {
-                        state.enabled.push_back(payload);
-                    }
-                }
-            }
-        }
-        std::lock_guard<std::mutex> lock(s_Lock);
-        s_Stack = state;
     }
 
     static T7Settings ReadT7SettingsFrom(const std::string& t7Path)
@@ -468,16 +343,12 @@ namespace BO3PT::GameSetup
                 s_Snap = snap;
             }
 
-            // Heavier work less often: hashes (only re-read when a file changes), the stack log, the mod list
+            // Hashes less often (each file is only re-read when it changes)
             if (!bo3Directory.empty()) {
                 if (tick % 2 == 0 || rescan) {
                     RefreshHash(GameDir() / L"BlackOps3.exe");
                     RefreshHash(OldSlot());
                     RefreshHash(NewSlot());
-                    ScanStackLog();
-                }
-                if (tick % 30 == 0 || rescan) {
-                    ScanMods();
                 }
             }
             tick++;
@@ -808,17 +679,6 @@ namespace BO3PT::GameSetup
             ImGui::TextColored(kGrey, "SHA-256 %s", view.hash.c_str());
         }
 
-        Indent();
-        if (view.kind == PatchKind::Scanning) {
-            ImGui::TextColored(kGrey, "Workshop Stack support: checking...");
-        }
-        else if (view.build && view.build->stackSupported) {
-            ImGui::TextColored(kGreen, ICON_FA_CIRCLE_CHECK " Workshop Stack works on this version (multiple mods).");
-        }
-        else {
-            ImGui::TextColored(kRed, ICON_FA_CIRCLE_XMARK " Workshop Stack refuses this version: only one mod at a time.");
-        }
-
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -878,127 +738,7 @@ namespace BO3PT::GameSetup
         Indent();
         ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - 25.0f);
         ImGui::TextColored(kGrey, "Old patch: for speedrunning. Launching BO3 from Steam can update it back to the new patch, so use Start T7 Patch + BO3 on the T7 Patch page.\n"
-            "New patch: needed for Workshop Stack (multiple mods at once).");
-        ImGui::PopTextWrapPos();
-    }
-
-    // ---------------------------------------------------------------- Loaded Mods page
-
-    static const ModItem* LookupMod(const std::vector<ModItem>& mods, const std::string& key)
-    {
-        for (const ModItem& mod : mods) {
-            if (mod.id == key || _stricmp(mod.folder.c_str(), key.c_str()) == 0) {
-                return &mod;
-            }
-        }
-        return nullptr;
-    }
-
-    void LoadedModsFunc()
-    {
-        StackState stack;
-        std::vector<ModItem> mods;
-        {
-            std::lock_guard<std::mutex> lock(s_Lock);
-            stack = s_Stack;
-            mods = s_Mods;
-        }
-        bool gameRunning = GetSnapshot().game.pid != 0;
-
-        Title("Loaded Mods");
-
-        Indent();
-        TextFont::Render("Workshop Stack", sidebarFont);
-        Indent();
-        if (!stack.installed) {
-            ImGui::TextColored(kRed, ICON_FA_CIRCLE_XMARK " Not installed. Subscribe to \"BO3 Workshop Stack (Experimental)\" on the Workshop.");
-        }
-        else if (!stack.logFound) {
-            ImGui::TextColored(kGrey, "Installed, but it hasn't run yet. Load it from BO3's MODS menu.");
-        }
-        else {
-            ImGui::TextColored(kGrey, "Version %s  |  %s", stack.version.c_str(), gameRunning ? "this game session" : "last game session");
-            Indent();
-            if (stack.refused) {
-                ImGui::TextColored(kRed, ICON_FA_CIRCLE_XMARK " Refused to run:");
-                Indent();
-                ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - 25.0f);
-                std::string firstLine = stack.refusedReason.substr(0, stack.refusedReason.find('\n'));
-                ImGui::TextWrapped("%s", firstLine.c_str());
-                Indent();
-                ImGui::TextColored(kYellow, "Fix: switch to the New Patch on the Game Version page.");
-                ImGui::PopTextWrapPos();
-            }
-            else if (stack.count > 0 || !stack.enabled.empty()) {
-                int count = stack.count > 0 ? stack.count : (int)stack.enabled.size();
-                ImGui::TextColored(kGreen, ICON_FA_LAYER_GROUP " Active with %d mod%s:", count, count == 1 ? "" : "s");
-                int index = 1;
-                for (const std::string& payload : stack.enabled) {
-                    size_t space = payload.find(' ');
-                    std::string key = payload.substr(0, space);
-                    std::string rest = space == std::string::npos ? "" : StripColors(payload.substr(space + 1));
-                    const ModItem* mod = LookupMod(mods, key);
-                    Indent();
-                    ImGui::Text("%d.  %s", index++, mod ? mod->title.c_str() : (rest.empty() ? key.c_str() : rest.c_str()));
-                }
-            }
-            else if (stack.turnedOn) {
-                ImGui::TextColored(kYellow, "Workshop Stack is on, but no gameplay mods are applied yet.");
-            }
-            else {
-                ImGui::TextColored(kGrey, "Workshop Stack started, but no stack was applied.");
-            }
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        Indent();
-        TextFont::Render("Subscribed mods", sidebarFont);
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - 135.0f);
-        if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Refresh", ImVec2(110, 25))) {
-            s_RescanNow = true;
-        }
-
-        Indent();
-        ImGui::BeginChild("##ModList", ImVec2(ImGui::GetContentRegionAvail().x - 25.0f, ImGui::GetContentRegionAvail().y - 90.0f), true);
-        if (ImGui::BeginTable("##Mods", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("Mod", ImGuiTableColumnFlags_WidthStretch, 4.0f);
-            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthStretch, 1.5f);
-            for (const ModItem& mod : mods) {
-                if (mod.type != "mod") {
-                    continue;
-                }
-                bool inStack = false;
-                for (const std::string& payload : stack.enabled) {
-                    std::string key = payload.substr(0, payload.find(' '));
-                    if (key == mod.id || _stricmp(key.c_str(), mod.folder.c_str()) == 0) {
-                        inStack = true;
-                    }
-                }
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", mod.title.c_str());
-                ImGui::TableNextColumn();
-                if (mod.id == Narrow(kStackId)) {
-                    ImGui::TextColored(kGrey, "loader");
-                }
-                else if (inStack && !stack.refused) {
-                    ImGui::TextColored(kGreen, ICON_FA_CIRCLE_CHECK " loaded");
-                }
-                else {
-                    ImGui::TextColored(kGrey, "-");
-                }
-            }
-            ImGui::EndTable();
-        }
-        ImGui::EndChild();
-
-        Indent();
-        ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - 25.0f);
-        ImGui::TextColored(kGrey, "Without Workshop Stack, BO3 loads one mod from its MODS menu, which you can play on any custom map. "
-            "The Yuri Moyonote skins replace the Primis crew, so pick maps that use Dempsey, Nikolai, Richtofen and Takeo.");
+            "New patch: the current Steam version.");
         ImGui::PopTextWrapPos();
     }
 
@@ -1125,8 +865,7 @@ namespace BO3PT::GameSetup
         Indent();
         ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - 25.0f);
         ImGui::TextColored(kGrey, "T7 Patch by serious protects BO3 from remote crashes and exploits. Leave it open while you play. "
-            "Its settings (friends only, password, name) stay in T7 Patch's own window. "
-            "Workshop Stack was tested with T7 Patch 3.x; if the stack misbehaves with 2.04, try a newer T7 Patch.");
+            "Its settings (friends only, password, name) stay in T7 Patch's own window.");
         ImGui::PopTextWrapPos();
     }
 }

@@ -72,7 +72,7 @@ static ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFla
 static ImGuiViewport* viewport;
 
 static MSSelection sidebarSelections({ {{ "Gobblegum Loadouts", "Weapon Loadouts", "Autosplits", "Practice Patches", "Settings", "Documentation" }}, {{ "Player Options", "Zombie Options", "Round Options", "Powerup Options", "Egg Step Options", "Craftable Options", "Blocker Options", "Map Options" }},
-        {{ "Gum Tracker", "Zombie Calculator", "Code Guides", "GK Valve Solver" }}, {{ "Game Version", "Loaded Mods", "T7 Patch" }} });
+        {{ "Gum Tracker", "Zombie Calculator", "Code Guides", "GK Valve Solver" }}, {{ "Game Version", "T7 Patch" }} });
 static MSSelection weaponSelections;
 static std::vector<MSSelection> autosplitSelections;
 
@@ -113,8 +113,16 @@ std::string downgradeResult;
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow)
 {
 	while (g_ApplicationRunning) {
-		char buf[256];
-		GetCurrentDirectoryA(256, buf);
+		// Portable: always work from the exe's own folder, whatever folder it was started from,
+		// so settings, fonts and images are found next to the exe (e.g. on a USB stick or another PC).
+		char buf[MAX_PATH];
+		DWORD len = GetModuleFileNameA(NULL, buf, MAX_PATH);
+		if (len > 0 && len < MAX_PATH) {
+			std::string exeDir(buf, len);
+			exeDir = exeDir.substr(0, exeDir.find_last_of("\\/"));
+			SetCurrentDirectoryA(exeDir.c_str());
+		}
+		GetCurrentDirectoryA(MAX_PATH, buf);
 		selfDirectory = buf;
 
         WLog::InitLogger(selfDirectory + "/log.txt");
@@ -730,7 +738,6 @@ void SetupData()
     GUIState::AddMember({ std::function<void()>(CodeGuidesFunc) });
     GUIState::AddMember({ std::function<void()>(GKValveSolverFunc) });
     GUIState::AddMember({ std::function<void()>(GameSetup::GameVersionFunc) });
-    GUIState::AddMember({ std::function<void()>(GameSetup::LoadedModsFunc) });
     GUIState::AddMember({ std::function<void()>(GameSetup::T7PatchFunc) });
 
     GameSetup::Init();
