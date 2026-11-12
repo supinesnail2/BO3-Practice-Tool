@@ -1,0 +1,6 @@
+﻿<Project>
+  <PropertyGroup>
+    <IncludePath>$(MSBuildThisFileDirectory)deps\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(MSBuildThisFileDirectory)deps\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+</Project>

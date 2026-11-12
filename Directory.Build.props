@@ -1,0 +1,11 @@
+<Project>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <ForcedIncludeFiles>mutex;thread;algorithm;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>libcurl.lib;miniz.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
